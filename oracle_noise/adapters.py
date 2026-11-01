@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import dataclasses
 import functools
 import threading
 
@@ -12,6 +13,41 @@ from .math import attention_objective
 
 OPTIMIZATION_LOCK = threading.RLock()
 _ATTENTION_PRECISION = 'fp32'
+
+
+def _normal_frozen_tensor(tensor):
+    """Give autograd a normal tensor while sharing plain frozen storage.
+
+    Tensor subclasses can carry layout/dispatch metadata that set_ would lose;
+    retain their existing clone behavior instead.
+    """
+    if type(tensor) in (torch.Tensor, torch.nn.Parameter) and tensor.layout == torch.strided:
+        return torch.empty(0, dtype=tensor.dtype, device=tensor.device).set_(tensor)
+    return tensor.detach().clone()
+
+
+def _shared_quantized_tensor(tensor):
+    """Share supported Comfy quantized storage with a normal tensor wrapper."""
+    try:
+        from comfy.quant_ops import QuantizedTensor
+    except ImportError:
+        return None
+    layouts = {"TensorCoreFP8Layout", "TensorCoreFP8E4M3Layout", "TensorCoreFP8E5M2Layout", "TensorWiseINT8Layout"}
+    if type(tensor) is not QuantizedTensor or getattr(tensor, "_layout_cls", None) not in layouts:
+        return None
+    params = getattr(tensor, "_params", None)
+    data = getattr(tensor, "_qdata", None)
+    fields = getattr(params, "_tensor_fields", None)
+    if not dataclasses.is_dataclass(params) or not callable(fields) or type(data) is not torch.Tensor or data.layout != torch.strided:
+        return None
+    names = fields()
+    values = [getattr(params, name, None) for name in names]
+    if any(type(value) is not torch.Tensor or value.layout != torch.strided for value in values):
+        return None
+    replacements = {name: _normal_frozen_tensor(value) if torch.is_inference(value) else value
+                    for name, value in zip(names, values)}
+    return QuantizedTensor(_normal_frozen_tensor(data), tensor._layout_cls,
+                           dataclasses.replace(params, **replacements))
 
 
 @contextmanager
@@ -150,15 +186,21 @@ def differentiable_model(model, family, memory_required_bytes=None, force_full_l
             layout = getattr(module, "layout_type", None)
             if layout is not None and layout not in supported_layouts:
                 raise ValueError(f"Oracle Noise does not support diffusion quantization layout {layout}.")
-        # Loader nodes run in inference mode. Frozen parameters still need normal
-        # version counters when autograd saves them for input gradients.
+        # Loader nodes run in inference mode. Autograd needs normal tensor
+        # wrappers, but plain frozen weights can share their existing storage.
+        share_quantized = (getattr(getattr(delegate, "load_device", None), "type", None) == "cuda"
+                           and not getattr(delegate, "patches", {})
+                           and not getattr(delegate, "weight_inplace_update", False))
         for name, parameter in diffusion.named_parameters():
             if torch.is_inference(parameter):
+                normal = _shared_quantized_tensor(parameter) if share_quantized else None
+                if normal is None:
+                    normal = _normal_frozen_tensor(parameter)
                 delegate.add_object_patch(f"diffusion_model.{name}",
-                                          torch.nn.Parameter(parameter.detach().clone(), requires_grad=False))
+                                          torch.nn.Parameter(normal, requires_grad=False))
         for name, buffer in diffusion.named_buffers():
             if torch.is_inference(buffer):
-                delegate.add_object_patch(f"diffusion_model.{name}", buffer.detach().clone())
+                delegate.add_object_patch(f"diffusion_model.{name}", _normal_frozen_tensor(buffer))
         if family == "anima":
             for index, block in enumerate(diffusion.blocks):
                 for name in ("self_attn", "cross_attn"):
@@ -182,9 +224,16 @@ def differentiable_model(model, family, memory_required_bytes=None, force_full_l
         yield delegate, diffusion
     finally:
         try:
-            mm.unload_all_models()
+            # Restore the original objects before Comfy offloads the delegate.
+            # Otherwise .to(cpu) copies the temporary GPU weights into RAM,
+            # only to discard them when object_patches_backup is restored.
+            if getattr(delegate, "object_patches_backup", None):
+                delegate.unpatch_model()
         finally:
-            mm.in_training, mm.training_fp8_bwd = previous_training, previous_fp8
+            try:
+                mm.unload_all_models()
+            finally:
+                mm.in_training, mm.training_fp8_bwd = previous_training, previous_fp8
 
 
 class AttentionAdapter:
