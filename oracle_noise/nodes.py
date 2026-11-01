@@ -27,9 +27,9 @@ class OracleNoise:
             "conditioning_prompt": ("STRING", {"forceInput": True, "tooltip": "Connect the encoder-facing prompt from Oracle Prompt Preprocess & Encode when using its plain-text outputs."}),
             "layer_indices": ("STRING", {"default": "", "tooltip": "Comma-separated zero-based denoiser block indices. Blank selects first, middle, and last: Anima Base 0,14,27; MOSS Base 0,21,41."}),
             "layer_weights": ("STRING", {"default": "1.0,1.5,2.0", "tooltip": "Comma-separated objective weights, one per selected block, in the same order. Change this when selecting a different number of blocks."}),
-            "attention_math": (["fp32", "bf16", "fp16"], {"default": "fp32", "tooltip": "BF16 and FP16 use lower precision math attention on CUDA. Objective and spherical updates stay FP32."}),
+            "precision": (["fp32", "bf16", "fp16"], {"default": "fp32", "tooltip": "BF16 and FP16 use lower precision math attention on CUDA. Objective and spherical updates stay FP32."}),
             "speed_preset": (["normal", "fast"], {"default": "normal", "tooltip": "Fast schedules CFG logits for the first third of iterations when positive + negative is selected."}),
-            "block_preset": (["Custom", "Anima", "MOSS"], {"default": "Custom", "tooltip": "Anima and MOSS use the benchmark block indices and weights. Custom uses layer_indices and layer_weights."}),
+            "layer_preset": (["Custom", "Anima", "MOSS"], {"default": "Custom", "tooltip": "Anima and MOSS use the benchmark layer indices and weights. Custom uses layer_indices and layer_weights."}),
             "noise_color": (["off", "pink", "brown", "custom"], {"default": "off", "tooltip": "Apply spatial fractal color after Oracle optimization. Pink uses 1/f power; brown uses 1/f². Off preserves the current output."}),
             "color_strength": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Blend toward colored noise: 0 is unchanged, 1 is fully colored. Mean and norm are retained."}),
             "color_slope": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 4.0, "step": 0.05, "tooltip": "Custom mode only: spatial power falls as 1/f^slope. 1 is pink; 2 is brown."}),
@@ -56,6 +56,8 @@ class OracleNoise:
             "query_chunk_size": 2048,
             "importance_batch_size": 64,
         })
+        kwargs["attention_math"] = kwargs.pop("precision", "fp32")
+        kwargs["block_preset"] = kwargs.pop("layer_preset", "Custom")
         return (OracleNoiseProvider(**kwargs),)
 
 
