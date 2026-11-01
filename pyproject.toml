@@ -1,11 +1,22 @@
 [project]
 name = "comfyui-oracle-noise"
 version = "0.1.11"
-description = "Experimental spherical noise optimization for Anima and MOSS in ComfyUI"
-license = "GPL-3.0-or-later"
+description = "Prompt-aware initial noise optimization for Anima and MOSS"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
-dependencies = ["torch", "transformers", "sentencepiece", "protobuf"]
+dynamic = ["dependencies"]
+
+[project.urls]
+Repository = "https://github.com/xmexvo/ComfyUI-OracleNoise"
+Documentation = "https://github.com/xmexvo/ComfyUI-OracleNoise#readme"
+"Bug Tracker" = "https://github.com/xmexvo/ComfyUI-OracleNoise/issues"
 
 [tool.setuptools.packages.find]
 include = ["oracle_noise*"]
 
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.comfy]
+PublisherId = "xmex"
+DisplayName = "Oracle Noise (Anima/MOSS)"
