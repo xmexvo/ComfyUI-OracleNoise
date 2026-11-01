@@ -9,12 +9,31 @@ These CLIP-L encoders are used in the example and comparison workflows:
 - [Anzhc SDXL Text Encoder Longer CLIP-L](https://huggingface.co/Anzhc/SDXL-Text-Encoder-Longer-CLIP-L)
 - [zer0int LongCLIP KO-LITE TypoAttack ViT-L/14](https://huggingface.co/zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14)
 
+## Anima VAE and Required Node Pack
+
+The Anima workflows use the [Anzhc Qwen2D-Anime VAE](https://huggingface.co/Anzhc/Qwen2D-Anime-VAE), which requires the [Anzhc Qwen2D ComfyUI node pack](https://github.com/Anzhc/anzhc-qwen2d-comfyui). Install the node pack in ComfyUI and restart before running the Anima workflows.
+
 ## Workflows
 
 The [workflow directory](workflows/) includes four workflows:
 
 - `anima-example.json` and `moss-example.json` are single-image examples, set to 2 Oracle iterations and a 0.025 step size. The MOSS example uses **Oracle Prompt Preprocess & Encode**.
 - `anima-compare.json` and `moss-compare.json` compare the baseline, 38-step compute-matched baseline, and variants at step sizes 0.01, 0.005, and 0.05 at 5, 5 and 1 iteration respectively. 
+
+## Examples
+
+<details>
+<summary>Expand to view example comparison images</summary>
+
+![Oracle Noise comparison example 1](img/Oracle%20Noise%20Compare_00001_.png)
+
+![Oracle Noise comparison example 2](img/Oracle%20Noise%20Compare_00002_.png)
+
+![Oracle Noise comparison example 3](img/Oracle%20Noise%20Compare_00003_.png)
+
+![Oracle Noise comparison example 4](img/Oracle%20Noise%20Compare_00004_.png)
+
+</details>
 
 ## Oracle Noise inputs
 
