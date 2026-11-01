@@ -1,6 +1,6 @@
-# Oracle Noise for ComfyUI
+# Oracle Noise for ComfyUI (Anima / MOSS)
 
-ComfyUI implementation of [Oracle Noise: Faster Semantic Spherical Alignment for Interpretable Latent Optimization](https://arxiv.org/abs/2604.23540).
+ComfyUI implementation of [Oracle Noise: Faster Semantic Spherical Alignment for Interpretable Latent Optimization](https://arxiv.org/abs/2604.23540). Currently only supports MOSS and Anima. Works best with Anima, limited effectiveness for MOSS.
 
 ## Long-Context CLIP Encoders
 
@@ -9,21 +9,21 @@ These CLIP-L encoders are used in the example and comparison workflows:
 - [Anzhc SDXL Text Encoder Longer CLIP-L](https://huggingface.co/Anzhc/SDXL-Text-Encoder-Longer-CLIP-L)
 - [zer0int LongCLIP KO-LITE TypoAttack ViT-L/14](https://huggingface.co/zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14)
 
-## Anima VAE and Required Node Pack
+## VAE
 
-The Anima workflows use the [Anzhc Qwen2D-Anime VAE](https://huggingface.co/Anzhc/Qwen2D-Anime-VAE), which requires the [Anzhc Qwen2D ComfyUI node pack](https://github.com/Anzhc/anzhc-qwen2d-comfyui). Install the node pack in ComfyUI and restart before running the Anima workflows.
+The Anima workflows use [Anzhc Qwen2D-Anime VAE](https://huggingface.co/Anzhc/Qwen2D-Anime-VAE), which requires [Anzhc Qwen2D ComfyUI node pack](https://github.com/Anzhc/anzhc-qwen2d-comfyui) for better quality. 
 
 ## Workflows
 
 The [workflow directory](workflows/) includes four workflows:
 
-- `anima-example.json` and `moss-example.json` are single-image examples, set to 2 Oracle iterations and a 0.025 step size. The MOSS example uses **Oracle Prompt Preprocess & Encode**.
+- `anima-example.json` and `moss-example.json` are single-image examples, set to 2 iterations and 0.025 step size. MOSS uses **Oracle Prompt Preprocess & Encode**.
 - `anima-compare.json` and `moss-compare.json` compare the baseline, 38-step compute-matched baseline, and variants at step sizes 0.01, 0.005, and 0.05 at 5, 5 and 1 iteration respectively. 
 
 ## Examples
 
 <details>
-<summary>Expand to view example comparison images</summary>
+<summary>Expand to view example comparison images (Anima)</summary>
 
 ![Oracle Noise comparison example 1](img/Oracle%20Noise%20Compare_00001_.png)
 
@@ -60,9 +60,18 @@ The node produces starting noise for the sampler. Its main controls are:
 | `noise_color`, `color_strength`, `color_slope` | Optionally change the noise pattern. Color is off by default; slope applies to Custom color. |
 | `oracle_prompt_data`, `conditioning_prompt` | Optional connections from the prompt preprocessing node. |
 
+## Recommended Defaults
+
+| Input | Value |
+|---|---|
+| `iterations`| 5 or 2 with step size 0.025 |
+| `step_size` | 0.01 or 0.025 with 2 iterations |
+| `optimization_guidance` | Same value as CFG. |
+| `resolution`, `relative_resolution` | 512 offers balanced quality x speed |
+
 ## Oracle Prompt Preprocess & Encode
 
-This optional node prepares a prompt and encodes it for the model. It can handle plain text and supported MOSS layouts, including prompt emphasis.
+Prepares a prompt and encodes it for the model. It can handle plain text and supported MOSS layouts, including prompt emphasis.
 
 - **`clip`**: Connect the model's native text encoder.
 - **`text`**: Enter the positive prompt or supported MOSS layout.
