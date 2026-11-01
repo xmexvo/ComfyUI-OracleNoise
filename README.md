@@ -4,7 +4,7 @@ ComfyUI implementation of [Oracle Noise: Faster Semantic Spherical Alignment for
 
 ## Long-Context CLIP Encoders
 
-These CLIP-L encoders are used in the example and comparison workflows:
+These CLIP-L encoders are used in the example and comparison workflows. Normal CLIP-L and CLIP-G can be used:
 
 - [Anzhc SDXL Text Encoder Longer CLIP-L](https://huggingface.co/Anzhc/SDXL-Text-Encoder-Longer-CLIP-L)
 - [zer0int LongCLIP KO-LITE TypoAttack ViT-L/14](https://huggingface.co/zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14)
