@@ -23,7 +23,7 @@ The [workflow directory](workflows/) includes four workflows:
 ## Examples
 
 <details>
-<summary>Expand to view example comparison images (Anima)</summary>
+<summary>Expand to view example comparison images (Anima). Drop the images into ComfyUI for full prompts + workflow.</summary>
 
 ![Oracle Noise comparison example 1](img/Oracle%20Noise%20Compare_00001_.png)
 
