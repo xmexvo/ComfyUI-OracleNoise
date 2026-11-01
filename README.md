@@ -1,6 +1,6 @@
-# Oracle Noise for ComfyUI
+# Oracle Noise for ComfyUI (Anima / MOSS)
 
-ComfyUI implementation of [Oracle Noise: Faster Semantic Spherical Alignment for Interpretable Latent Optimization](https://arxiv.org/abs/2604.23540). Works best with Anima, limited effectiveness for MOSS.
+ComfyUI implementation of [Oracle Noise: Faster Semantic Spherical Alignment for Interpretable Latent Optimization](https://arxiv.org/abs/2604.23540). Currently only supports MOSS and Anima. Works best with Anima, limited effectiveness for MOSS.
 
 ## Long-Context CLIP Encoders
 
