@@ -1,39 +1,26 @@
 # Oracle Noise for ComfyUI
 
-Oracle Noise shapes the starting noise for an image using your prompt. This experimental implementation supports **Anima** and **MOSS-Image** and is based on [Oracle Noise: Faster Semantic Spherical Alignment for Interpretable Latent Optimization](https://arxiv.org/abs/2604.23540). Results can vary; more optimization does not always mean a better image.
+ComfyUI implementation of [Oracle Noise: Faster Semantic Spherical Alignment for Interpretable Latent Optimization](https://arxiv.org/abs/2604.23540).
 
-## Install
+## Long-Context CLIP Encoders
 
-Place this repository in `ComfyUI/custom_nodes/ComfyUI-OracleNoise` and restart ComfyUI. If the tokenizer dependencies are missing, install the packages in `requirements.txt` using the Python environment that runs ComfyUI.
-
-## Optional Long-Context CLIP Encoders
-
-These CLIP-L encoders are used as separate importance scorers in the example and comparison workflows:
+These CLIP-L encoders are used in the example and comparison workflows:
 
 - [Anzhc SDXL Text Encoder Longer CLIP-L](https://huggingface.co/Anzhc/SDXL-Text-Encoder-Longer-CLIP-L)
 - [zer0int LongCLIP KO-LITE TypoAttack ViT-L/14](https://huggingface.co/zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14)
 
-Load either with `CLIPLoader` as the importance encoder; keep the model's native encoder for prompt conditioning.
+## Workflows
 
-## Getting started
-
-1. Load your model, native text encoder, and positive and negative prompts. Apply any LoRAs to the model first.
-2. Load a separate CLIP-L, CLIP-G, or SDXL CLIP-L/G encoder for prompt importance scoring.
-3. Connect these, the positive prompt text, and your sampling schedule (`SIGMAS`) to **Oracle Noise (Anima / MOSS)**. Use the same model, conditioning, and schedule for sampling.
-4. Connect its `NOISE` output to `SamplerCustomAdvanced` and supply an empty latent: `EmptySD3LatentImage` for Anima or `EmptyFlux2LatentImage` for MOSS.
-
-The [workflow directory](workflows/) includes four UI workflows:
+The [workflow directory](workflows/) includes four workflows:
 
 - `anima-example.json` and `moss-example.json` are single-image examples, set to 2 Oracle iterations and a 0.025 step size. The MOSS example uses **Oracle Prompt Preprocess & Encode**.
-- `anima-compare.json` and `moss-compare.json` compare the baseline, 38-step compute-matched baseline, and Oracle variants at step sizes 0.01, 0.005, and 0.05. The 0.05 variants use one iteration; the others use five. MOSS uses its native prompt preprocessing node.
-
-Select model files after importing. The distilled API graphs remain available as templates awaiting checkpoint validation.
+- `anima-compare.json` and `moss-compare.json` compare the baseline, 38-step compute-matched baseline, and variants at step sizes 0.01, 0.005, and 0.05 at 5, 5 and 1 iteration respectively. 
 
 ## Oracle Noise inputs
 
 The node produces starting noise for the sampler. Its main controls are:
 
-| Input | What it does |
+| Input | Purpose |
 |---|---|
 | `model`, `native_encoder` | The diffusion model and its usual text encoder. |
 | `importance_encoder` | A separate CLIP encoder used to estimate which prompt words matter. |
@@ -63,7 +50,3 @@ This optional node prepares a prompt and encodes it for the model. It can handle
 - **`format`**: Choose Auto, Plain text, or MOSS layout.
 
 Connect its `conditioning` output to both Oracle's positive input and the sampler's positive conditioning. Connect `oracle_prompt_data` to Oracle's matching input, especially for MOSS layouts. The node also provides prompt text outputs for plain-text workflows.
-
-## Notes
-
-Use ordinary single-prompt conditioning and an empty image latent. Video, masks, regional or scheduled conditioning, reference editing, and GGUF are not supported. Optimization adds time and memory use, and its results are not guaranteed to improve every image.
