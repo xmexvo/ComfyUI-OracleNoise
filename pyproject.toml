@@ -1,0 +1,11 @@
+[project]
+name = "comfyui-oracle-noise"
+version = "0.1.11"
+description = "Experimental spherical noise optimization for Anima and MOSS in ComfyUI"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"
+dependencies = ["torch", "transformers", "sentencepiece", "protobuf"]
+
+[tool.setuptools.packages.find]
+include = ["oracle_noise*"]
+
