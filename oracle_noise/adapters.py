@@ -177,9 +177,15 @@ def differentiable_model(model, family, memory_required_bytes=None, force_full_l
     """Use ModelPatcher object patches; never replace methods on shared modules directly."""
     import comfy.model_management as mm
 
-    delegate = model.clone(disable_dynamic=True)
+    is_dynamic = getattr(model, "is_dynamic", None)
+    cached_delegate = getattr(model, "get_non_dynamic_delegate", None)
+    if callable(is_dynamic) and is_dynamic() and callable(cached_delegate):
+        delegate = cached_delegate()
+    else:
+        delegate = model.clone(disable_dynamic=True)
     diffusion = delegate.get_model_object("diffusion_model")
     previous_training, previous_fp8 = mm.in_training, mm.training_fp8_bwd
+    completed = False
     try:
         supported_layouts = {"TensorCoreFP8Layout", "TensorCoreFP8E4M3Layout", "TensorCoreFP8E5M2Layout", "TensorWiseINT8Layout"}
         for module in diffusion.modules():
@@ -222,18 +228,25 @@ def differentiable_model(model, family, memory_required_bytes=None, force_full_l
         # Loading a partially resident model may defer casts; its native cast
         # helpers handle them again when checkpointed blocks are recomputed.
         yield delegate, diffusion
+        completed = True
     finally:
+        cleaned = False
         try:
-            # Restore the original objects before Comfy offloads the delegate.
-            # Otherwise .to(cpu) copies the temporary GPU weights into RAM,
-            # only to discard them when object_patches_backup is restored.
-            if getattr(delegate, "object_patches_backup", None):
-                delegate.unpatch_model()
-        finally:
             try:
-                mm.unload_all_models()
+                # Restore originals before offload to avoid a redundant host copy.
+                if getattr(delegate, "object_patches_backup", None):
+                    delegate.unpatch_model()
             finally:
-                mm.in_training, mm.training_fp8_bwd = previous_training, previous_fp8
+                try:
+                    mm.unload_all_models()
+                finally:
+                    mm.in_training, mm.training_fp8_bwd = previous_training, previous_fp8
+            cleaned = True
+        finally:
+            if not completed or not cleaned:
+                cached = getattr(model, "non_dynamic_delegate_model", None)
+                if isinstance(cached, tuple) and cached and cached[0] is getattr(delegate, "model", None):
+                    model.non_dynamic_delegate_model = None
 
 
 class AttentionAdapter:
