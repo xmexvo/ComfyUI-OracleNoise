@@ -253,92 +253,14 @@ class _DynamicUnavailable(Exception):
     pass
 
 
-@functools.lru_cache(maxsize=8)
-def _known_dynamic_runtime(functions, aimdo_version):
-    # These loader internals are not a stable public API.  Only use the
-    # verified implementation, particularly its owned synchronous fallback.
-    import hashlib
-    import inspect
-    expected = (
-        '91b16dd6bf1875dc1f6e6f85b8fe1614f7f4f69ecc0a02a5df7a100a711df2e3',
-        'b3c9555cd6d710208d6e598258916706270ab5286a06e1023f92ec03958c74ca',
-        '31fed5cc6ff1675b653f591e47d440d19888f70039e69b1db5579f6ec1de572d',
-        '5c5feabea382a06756df6a9b57f5786a23e9c70a4651175fb61ebf68bef759a2',
-        'a6343db79b5d13572f73a4e07dbc2527e52f017e01dca4b192bdb6e0ffa4ef61',
-        'e9f73c2a374de624da14e3dce28f2d88ab779da5ee1c47600daecc2f58712384',
-        '315d9bdaf8545d329c3f6744493c013271894e8661aec194fb6de436666017f2',
-        '0cbb112aa2d6e2d5b38d574122f9ec9ccbbabaa2544ec6cc2db588f5bdbdc69c',
-        '98b1b830217c543d6ff89ef5c4c5be50c20e83ba50447b8771591e44da0d09a7',
-        '04fa0ab39f7265e6c0bb28f09a04aef2f76c5a268de0ca1a4ad9ea121e3ff7b2',
-        '47d9a35d858eaee8f83b28506d444e105374eb2ab05b56349f5c0c1b631db496',
-        '6f34b21a1de6c72fa9fcf89505575274614ad9d126cc36e9f588643d3184bf20',
-        '96593852145546638a40afe721d0672b2e86324c44d5dc179aa56a5923a93cca',
-    )
-    if aimdo_version != '0.6.0':
-        return False
-    try:
-        verified = []
-        for fn in functions:
-            if getattr(fn, '_torchdynamo_disable', False):
-                inner = getattr(fn, '__wrapped__', None)
-                if inner is not getattr(fn, '_torchdynamo_orig_callable', None):
-                    return False
-                fn = inner
-            verified.append(hashlib.sha256(inspect.getsource(fn).encode()).hexdigest())
-        return tuple(verified) == expected
-    except (OSError, TypeError):
-        return False
-
-
-def _known_compile_wrapper(model):
-    import hashlib
-    import inspect
+def _supported_compile_wrapper(model):
     if set(model.model_options) != {'transformer_options', 'torch_compile_kwargs'}:
         return False
     if model.model_options['transformer_options'] != {} or set(model.wrappers) != {'apply_model'}:
         return False
     wrappers = model.wrappers['apply_model']
-    if set(wrappers) != {'torch.compile'} or len(wrappers['torch.compile']) != 1:
-        return False
-    try:
-        source = inspect.getsource(wrappers['torch.compile'][0]).encode()
-        return hashlib.sha256(source).hexdigest() == 'eb71dfd57789b10f928ccef6a205a3ec97bbb7f8bf9773a7ce8f45a55fc9d887'
-    except (OSError, TypeError):
-        return False
-
-
-@functools.lru_cache(maxsize=8)
-def _known_lora_runtime(functions):
-    import hashlib
-    import inspect
-    expected = ('0445fca1a83cf542e804d76fbe19e90560ebca3256d0d641d4ebca1c8ed01362',
-                '0f0e7a97eaff261d5e9d39536ef47219230f2e175ede86c598451176b97fe85f',
-                'c6ba63543c0702e33f25cced28920efb0de331aefc49e042820fc9931c8c7fd2',
-                '592b778b1760434ffa52e1d40f0ca121af6a6e4e8389d08dcf3f8122872adc4c')
-    try:
-        return tuple(hashlib.sha256(inspect.getsource(fn).encode()).hexdigest() for fn in functions) == expected
-    except (OSError, TypeError):
-        return False
-
-
-@functools.lru_cache(maxsize=8)
-def _known_quant_lora_runtime(module_type, tensor_type, kitchen_version):
-    import hashlib
-    import inspect
-    if kitchen_version != '0.2.40':
-        return False
-    expected = ('930c1859094fd5c37b932ea328791ceef2e6660876d8d303e5c6df6c07e1d3a2',
-                '1f59489d17eb328f589744842ed39596e346a55cf63c7c1457d4215bd0fa8058',
-                '80a8de370c922eaf16dba92d5c3c1ae067c5120756c267bbfea68f66ff5d2a15',
-                'd04e87b277499eda69a3b4cdfc639434d9a4f7e0b1bd4e2224d7faa2f7b109ec',
-                'b27fa86ae98dd3eba6bbc443f2422494938b9545bb89b5cebe598b393832ca57',
-                '7ca4cdd85ff37de0a2e90169ef0bd583bc79a2b4ec205d0539b71da29a8271af')
-    functions = (module_type.forward, module_type.forward_comfy_cast_weights, module_type._forward,
-                 module_type.set_weight, module_type.convert_weight, tensor_type.requantize_from_float)
-    try:
-        return tuple(hashlib.sha256(inspect.getsource(fn).encode()).hexdigest() for fn in functions) == expected
-    except (OSError, TypeError):
-        return False
+    return (set(wrappers) == {'torch.compile'} and len(wrappers['torch.compile']) == 1
+            and callable(wrappers['torch.compile'][0]))
 
 
 def _supported_lora_patches(model, family):
@@ -348,15 +270,16 @@ def _supported_lora_patches(model, family):
         return False
     try:
         import re
-        import importlib.metadata
         import comfy.model_management as mm
         import comfy.model_patcher as patcher
         import comfy.lora
         import comfy.utils
         from comfy.quant_ops import QuantizedTensor
         from comfy.weight_adapter.lora import LoRAAdapter
-        if not _known_lora_runtime((patcher.LowVramPatch, patcher.ModelPatcher.patch_weight_to_device,
-                                    mm.lora_compute_dtype, comfy.lora.calculate_weight)):
+        if (not all(callable(fn) for fn in (patcher.LowVramPatch, patcher.ModelPatcher.patch_weight_to_device,
+                                             mm.lora_compute_dtype, comfy.lora.calculate_weight))
+                or not all(callable(getattr(patcher.LowVramPatch, name, None)) for name in
+                           ('memory_required', 'prepare', 'clear_prepared'))):
             return False
         if mm.lora_compute_dtype(model.load_device) != torch.float16:
             return False
@@ -385,8 +308,9 @@ def _supported_lora_patches(model, family):
                     return False
                 params = weight._params
                 if (not params.is_weight or not params.convrot or params.convrot_groupsize != 256 or params.transposed
-                        or not _known_quant_lora_runtime(type(module), QuantizedTensor,
-                                                        importlib.metadata.version('comfy-kitchen'))):
+                        or not all(callable(getattr(module, name, None)) for name in
+                                   ('forward_comfy_cast_weights', '_forward', 'set_weight', 'convert_weight'))
+                        or not callable(getattr(QuantizedTensor, 'requantize_from_float', None))):
                     return False
             for entry in entries:
                 if len(entry) != 5 or type(entry[1]) is not LoRAAdapter or entry[2:] != (1.0, None, None):
@@ -478,14 +402,12 @@ def _unload_other_models(mm, model):
 
 def _dynamic_eligible(model, family, force_full_load, native_quantized):
     try:
-        import importlib.metadata
         import comfy.memory_management as memory
         import comfy.model_management as mm
         import comfy.ops as ops
         from comfy.model_patcher import ModelPatcherDynamic
         import comfy_aimdo.model_vbar as vbar
-        aimdo_version = importlib.metadata.version('comfy-aimdo')
-    except (ImportError, importlib.metadata.PackageNotFoundError):
+    except ImportError:
         return False
     required_model = ('load_device', 'object_patches', 'weight_wrapper_patches', 'weight_inplace_update',
                       'force_cast_weights', 'is_injected', 'is_multigpu_base_clone', 'model_options',
@@ -493,7 +415,7 @@ def _dynamic_eligible(model, family, force_full_load, native_quantized):
                       'add_object_patch', 'unpatch_model')
     required_management = ('NUM_STREAMS', 'in_training', 'training_fp8_bwd', 'is_nvidia',
                            'get_all_torch_devices', 'free_memory', 'load_models_gpu', 'soft_empty_cache')
-    if (type(model) is not ModelPatcherDynamic
+    if (not isinstance(model, ModelPatcherDynamic)
             or any(not hasattr(model, name) for name in required_model)
             or any(not hasattr(mm, name) for name in required_management)
             or any(not callable(getattr(model, name, None)) for name in
@@ -516,7 +438,7 @@ def _dynamic_eligible(model, family, force_full_load, native_quantized):
     if not _supported_lora_patches(model, family):
         return False
     if model.model_options != {'transformer_options': {}} or model.wrappers:
-        if not _known_compile_wrapper(model):
+        if not _supported_compile_wrapper(model):
             return False
     if any(getattr(model, name, None) for name in ('attachments', 'additional_models', 'callbacks',
                                                     'injections', 'current_hooks', 'forced_hooks',
@@ -524,12 +446,6 @@ def _dynamic_eligible(model, family, force_full_load, native_quantized):
                                                     'cached_hook_patches')):
         return False
     if not all(callable(getattr(vbar, name, None)) for name in ('vbar_fault', 'vbar_unpin')):
-        return False
-    functions = (ops.cast_modules_with_vbar, ops.resolve_cast_module_with_vbar, ops.uncast_bias_weight,
-                 mm.get_offload_stream, vbar.vbar_fault, vbar.vbar_unpin, mm.free_memory, mm.soft_empty_cache,
-                 ModelPatcherDynamic.load, ModelPatcherDynamic._vbar_get, ModelPatcherDynamic.clone,
-                 ModelPatcherDynamic.unpatch_model, ModelPatcherDynamic.add_object_patch)
-    if not _known_dynamic_runtime(functions, aimdo_version):
         return False
     try:
         diffusion = model.get_model_object('diffusion_model')
