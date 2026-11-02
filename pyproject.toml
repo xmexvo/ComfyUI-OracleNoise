@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-oracle-noise"
-version = "0.1.14"
+version = "0.1.15"
 description = "Prompt-aware initial noise optimization for Anima and MOSS"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
