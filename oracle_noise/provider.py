@@ -247,7 +247,8 @@ class OracleNoiseProvider:
             effective_step_size = self.angular_step
         with attention_precision(self.attention_math), differentiable_model(
                 self.model, family, self._study_memory_required_bytes,
-                self._study_force_full_load, self._study_native_quantized) as (delegate, diffusion):
+                self._study_force_full_load, self._study_native_quantized,
+                optimization_shape=noise.shape) as (delegate, diffusion):
             device, dtype = delegate.load_device, delegate.model.get_dtype_inference()
             if self.attention_math == "bf16" and (device.type != "cuda" or not torch.cuda.is_bf16_supported()):
                 raise ValueError("BF16 attention requires a CUDA GPU with BF16 support.")
