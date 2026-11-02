@@ -261,10 +261,27 @@ class _DynamicUnavailable(Exception):
     pass
 
 
-def _supported_compile_wrapper(model):
-    if set(model.model_options) != {'transformer_options', 'torch_compile_kwargs'}:
+def _supported_model_options(model):
+    # These hooks run in ComfyUI's sampler, not in Oracle's block objective.
+    options = model.model_options
+    sampler_hooks = {'sampler_cfg_function', 'sampler_pre_cfg_function', 'sampler_post_cfg_function',
+                     'sampler_calc_cond_batch_function', 'denoise_mask_function', 'disable_cfg1_optimization'}
+    if set(options) - (sampler_hooks | {'transformer_options', 'torch_compile_kwargs'}):
         return False
-    if model.model_options['transformer_options'] != {} or set(model.wrappers) != {'apply_model'}:
+    if options.get('transformer_options', {}) != {}:
+        return False
+    for name in ('sampler_cfg_function', 'sampler_calc_cond_batch_function', 'denoise_mask_function'):
+        if name in options and not callable(options[name]):
+            return False
+    for name in ('sampler_pre_cfg_function', 'sampler_post_cfg_function'):
+        hooks = options.get(name, ())
+        if not isinstance(hooks, (list, tuple)) or not all(callable(hook) for hook in hooks):
+            return False
+    if 'disable_cfg1_optimization' in options and not isinstance(options['disable_cfg1_optimization'], bool):
+        return False
+    if not model.wrappers:
+        return 'torch_compile_kwargs' not in options
+    if 'torch_compile_kwargs' not in options or set(model.wrappers) != {'apply_model'}:
         return False
     wrappers = model.wrappers['apply_model']
     return (set(wrappers) == {'torch.compile'} and len(wrappers['torch.compile']) == 1
@@ -445,9 +462,8 @@ def _dynamic_eligible(model, family, force_full_load, native_quantized):
         return False
     if not _supported_lora_patches(model, family):
         return False
-    if model.model_options != {'transformer_options': {}} or model.wrappers:
-        if not _supported_compile_wrapper(model):
-            return False
+    if not _supported_model_options(model):
+        return False
     if any(getattr(model, name, None) for name in ('attachments', 'additional_models', 'callbacks',
                                                     'injections', 'current_hooks', 'forced_hooks',
                                                     'hook_patches', 'hook_patches_backup', 'hook_backup',
