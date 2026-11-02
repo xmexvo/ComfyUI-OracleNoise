@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import dataclasses
 import functools
 import threading
@@ -171,6 +171,21 @@ def anima_attn(module, q, k, v, transformer_options=None, **kwargs):
                            module.n_heads, skip_reshape=True, transformer_options=options)
 
 
+def _patch_anima_attention(delegate, diffusion):
+    for index, block in enumerate(diffusion.blocks):
+        for name in ("self_attn", "cross_attn"):
+            attention = getattr(block, name)
+            prefix = f"diffusion_model.blocks.{index}.{name}"
+            delegate.add_object_patch(prefix + ".compute_qkv", functools.partial(anima_qkv, attention))
+            delegate.add_object_patch(prefix + ".attn_op", functools.partial(anima_attn, attention))
+
+
+def _patch_full_precision(delegate, diffusion):
+    for name, module in diffusion.named_modules():
+        if hasattr(module, "_full_precision_mm"):
+            delegate.add_object_patch(f"diffusion_model.{name}._full_precision_mm", True)
+
+
 @contextmanager
 def _non_dynamic_model(model, family, memory_required_bytes=None, force_full_load=False,
                        native_quantized=False):
@@ -208,18 +223,11 @@ def _non_dynamic_model(model, family, memory_required_bytes=None, force_full_loa
             if torch.is_inference(buffer):
                 delegate.add_object_patch(f"diffusion_model.{name}", _normal_frozen_tensor(buffer))
         if family == "anima":
-            for index, block in enumerate(diffusion.blocks):
-                for name in ("self_attn", "cross_attn"):
-                    attention = getattr(block, name)
-                    prefix = f"diffusion_model.blocks.{index}.{name}"
-                    delegate.add_object_patch(prefix + ".compute_qkv", functools.partial(anima_qkv, attention))
-                    delegate.add_object_patch(prefix + ".attn_op", functools.partial(anima_attn, attention))
+            _patch_anima_attention(delegate, diffusion)
         # Frozen quantized matrices with unsupported inference-only dispatch are
         # dequantized by the existing ComfyUI cast path, preserving weight patches.
         if not native_quantized:
-            for name, module in diffusion.named_modules():
-                if hasattr(module, "_full_precision_mm"):
-                    delegate.add_object_patch(f"diffusion_model.{name}._full_precision_mm", True)
+            _patch_full_precision(delegate, diffusion)
         mm.in_training, mm.training_fp8_bwd = True, False
         mm.unload_all_models()
         mm.load_models_gpu([delegate], memory_required=(memory_required_bytes if memory_required_bytes is not None
@@ -230,17 +238,17 @@ def _non_dynamic_model(model, family, memory_required_bytes=None, force_full_loa
         yield delegate, diffusion
         completed = True
     finally:
+        def restore_training_state():
+            mm.in_training, mm.training_fp8_bwd = previous_training, previous_fp8
+
         cleaned = False
         try:
-            try:
+            with ExitStack() as cleanup:
+                cleanup.callback(restore_training_state)
+                cleanup.callback(mm.unload_all_models)
                 # Restore originals before offload to avoid a redundant host copy.
                 if getattr(delegate, "object_patches_backup", None):
-                    delegate.unpatch_model()
-            finally:
-                try:
-                    mm.unload_all_models()
-                finally:
-                    mm.in_training, mm.training_fp8_bwd = previous_training, previous_fp8
+                    cleanup.callback(delegate.unpatch_model)
             cleaned = True
         finally:
             if not completed or not cleaned:
@@ -508,15 +516,8 @@ def _dynamic_model(model, family, memory_required_bytes):
             if torch.is_inference(buffer):
                 delegate.add_object_patch(f'diffusion_model.{name}', _normal_frozen_tensor(buffer))
         if family == 'anima':
-            for index, block in enumerate(diffusion.blocks):
-                for name in ('self_attn', 'cross_attn'):
-                    attention = getattr(block, name)
-                    prefix = f'diffusion_model.blocks.{index}.{name}'
-                    delegate.add_object_patch(prefix + '.compute_qkv', functools.partial(anima_qkv, attention))
-                    delegate.add_object_patch(prefix + '.attn_op', functools.partial(anima_attn, attention))
-        for name, module in diffusion.named_modules():
-            if hasattr(module, '_full_precision_mm'):
-                delegate.add_object_patch(f'diffusion_model.{name}._full_precision_mm', True)
+            _patch_anima_attention(delegate, diffusion)
+        _patch_full_precision(delegate, diffusion)
         if family == 'moss' and delegate.patches:
             import comfy.utils
             for key in delegate.patches:
@@ -584,48 +585,60 @@ def _dynamic_model(model, family, memory_required_bytes):
         ready = True
         yield delegate, diffusion
     finally:
-        try:
-            try:
-                if held:
-                    torch.cuda.synchronize(delegate.load_device)
-            finally:
+        def restore_tensors():
+            for module, attr, original, normal in reversed(backups):
+                if getattr(module, attr, None) is normal:
+                    setattr(module, attr, original)
+
+        def restore_weight_patches():
+            for module, attr, original, replacement in reversed(patch_backups):
+                if getattr(module, attr, None) is replacement:
+                    setattr(module, attr, original)
+                module._v_signature = None
+
+        def unpin_all():
+            error = None
+            for allocation in reversed(held):
                 try:
-                    for module, attr, original, normal in reversed(backups):
-                        if getattr(module, attr, None) is normal:
-                            setattr(module, attr, original)
-                finally:
-                    try:
-                        for module, attr, original, replacement in reversed(patch_backups):
-                            if getattr(module, attr, None) is replacement:
-                                setattr(module, attr, original)
-                            module._v_signature = None
-                    finally:
-                        try:
-                            unpin_error = None
-                            for allocation in reversed(held):
-                                try:
-                                    vbar_api.vbar_unpin(allocation)
-                                except BaseException as exc:
-                                    if unpin_error is None:
-                                        unpin_error = exc
-                            if unpin_error is not None:
-                                raise unpin_error
-                        finally:
-                            try:
-                                if getattr(delegate, 'object_patches_backup', None) or not ready:
-                                    delegate.unpatch_model(unpatch_weights=not ready)
-                            finally:
-                                try:
-                                    if dynamic_vbar is not None:
-                                        dynamic_vbar.free_memory(1e30)
-                                finally:
-                                    try:
-                                        if not ready:
-                                            mm.unload_all_models()
-                                    finally:
-                                        mm.soft_empty_cache(force=True)
-        finally:
+                    vbar_api.vbar_unpin(allocation)
+                except BaseException as exc:
+                    if error is None:
+                        error = exc
+            if error is not None:
+                raise error
+
+        def restore_management_state():
             mm.in_training, mm.training_fp8_bwd, mm.NUM_STREAMS = old_training, old_fp8, old_streams
+
+        def unpatch_delegate():
+            if getattr(delegate, 'object_patches_backup', None) or not ready:
+                delegate.unpatch_model(unpatch_weights=not ready)
+
+        def free_vbar():
+            if dynamic_vbar is not None:
+                dynamic_vbar.free_memory(1e30)
+
+        def unload_after_failed_setup():
+            if not ready:
+                mm.unload_all_models()
+
+        def synchronize_if_pinned():
+            if held:
+                torch.cuda.synchronize(delegate.load_device)
+
+        # ExitStack runs every callback in reverse registration order even if
+        # an earlier cleanup step raises, just like nested finally blocks.
+        with ExitStack() as cleanup:
+            cleanup.callback(restore_management_state)
+            cleanup.callback(mm.soft_empty_cache, force=True)
+            cleanup.callback(unload_after_failed_setup)
+            cleanup.callback(free_vbar)
+            cleanup.callback(unpatch_delegate)
+            cleanup.callback(unpin_all)
+            cleanup.callback(restore_weight_patches)
+            cleanup.callback(restore_tensors)
+            cleanup.callback(synchronize_if_pinned)
+
 
 
 @contextmanager
